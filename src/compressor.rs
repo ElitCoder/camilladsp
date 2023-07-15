@@ -20,6 +20,7 @@ pub struct Compressor {
     pub samplerate: usize,
     pub scratch: Vec<PrcFmt>,
     pub prev_loudness: PrcFmt,
+    pub prev_gain: PrcFmt,
 }
 
 impl Compressor {
@@ -53,7 +54,7 @@ impl Compressor {
 
         let scratch = vec![0.0; chunksize];
 
-        debug!("Creating compressor '{}', channels: {}, monitor_channels: {:?}, process_channels: {:?}, attack: {}, release: {}, threshold: {}, factor: {}, makeup_gain: {}, soft_clip: {}, clip_limit: {:?}", 
+        debug!("Creating compressor '{}', channels: {}, monitor_channels: {:?}, process_channels: {:?}, attack: {}, release: {}, threshold: {}, factor: {}, makeup_gain: {}, soft_clip: {}, clip_limit: {:?}",
                 name, channels, process_channels, monitor_channels, attack, release, config.threshold, config.factor, config.makeup_gain(), config.soft_clip(), clip_limit);
         let limiter = if let Some(limit) = clip_limit {
             let limitconf = config::LimiterParameters {
@@ -78,7 +79,8 @@ impl Compressor {
             limiter,
             samplerate,
             scratch,
-            prev_loudness: -100.0,
+            prev_loudness: 0.0, // -inf dBFS
+            prev_gain: 1.0,     // 0 dBFS
         }
     }
 
@@ -96,27 +98,30 @@ impl Compressor {
     /// Estimate loudness, store result in self.scratch
     fn estimate_loudness(&mut self) {
         for val in self.scratch.iter_mut() {
-            // convert to dB
-            *val = 20.0 * (val.abs() + 1.0e-9).log10();
-            if *val >= self.prev_loudness {
-                *val = self.attack * self.prev_loudness + (1.0 - self.attack) * *val;
-            } else {
-                *val = self.release * self.prev_loudness + (1.0 - self.release) * *val;
-            }
-            self.prev_loudness = *val;
+            let sample = val.abs();
+            self.prev_loudness =
+                sample.max(self.release * self.prev_loudness + (1.0 - self.release) * sample);
+            *val = self.prev_loudness;
         }
     }
 
     /// Calculate linear gain, store result in self.scratch
     fn calculate_linear_gain(&mut self) {
+        let makeup_gain_linear = (10.0 as PrcFmt).powf(self.makeup_gain / 20.0);
+        let threshold_linear = (10.0 as PrcFmt).powf(self.threshold / 20.0);
+
         for val in self.scratch.iter_mut() {
-            if *val > self.threshold {
-                *val = -(*val - self.threshold) * (self.factor - 1.0) / self.factor;
+            self.prev_gain = self.prev_gain * self.attack + *val * (1.0 - self.attack);
+
+            let gain = if self.prev_gain > threshold_linear {
+                let gain_db = 20.0 * self.prev_gain.log10();
+                let gain_offset = -(gain_db - self.threshold) * (self.factor - 1.0) / self.factor;
+                (10.0 as PrcFmt).powf(gain_offset / 20.0)
             } else {
-                *val = 0.0;
-            }
-            *val += self.makeup_gain;
-            *val = (10.0 as PrcFmt).powf(*val / 20.0);
+                1.0
+            };
+
+            *val = gain * makeup_gain_linear;
         }
     }
 
@@ -196,7 +201,7 @@ impl Processor for Compressor {
             self.makeup_gain = config.makeup_gain();
             self.limiter = limiter;
 
-            debug!("Updated compressor '{}', monitor_channels: {:?}, process_channels: {:?}, attack: {}, release: {}, threshold: {}, factor: {}, makeup_gain: {}, soft_clip: {}, clip_limit: {:?}", 
+            debug!("Updated compressor '{}', monitor_channels: {:?}, process_channels: {:?}, attack: {}, release: {}, threshold: {}, factor: {}, makeup_gain: {}, soft_clip: {}, clip_limit: {:?}",
                 self.name, self.process_channels, self.monitor_channels, attack, release, config.threshold, config.factor, config.makeup_gain(), config.soft_clip(), clip_limit);
         } else {
             // This should never happen unless there is a bug somewhere else
