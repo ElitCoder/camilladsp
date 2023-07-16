@@ -12,6 +12,7 @@ pub struct Compressor {
     pub monitor_channels: Vec<usize>,
     pub process_channels: Vec<usize>,
     pub attack: PrcFmt,
+    pub hold: usize,
     pub release: PrcFmt,
     pub threshold: PrcFmt,
     pub factor: PrcFmt,
@@ -21,6 +22,8 @@ pub struct Compressor {
     pub scratch: Vec<PrcFmt>,
     pub prev_loudness: PrcFmt,
     pub prev_gain: PrcFmt,
+    pub hold_value: PrcFmt,
+    pub hold_timer: usize,
 }
 
 impl Compressor {
@@ -46,16 +49,18 @@ impl Compressor {
                 process_channels.push(n);
             }
         }
+
         let attack = (-1.0 / srate / config.attack).exp();
-        let release = (-1.0 / srate / config.release).exp();
+        let hold = (config.hold * srate).floor() as usize;
+        let release = (-1.0 / srate / (config.release - config.attack + config.hold)).exp();
         let clip_limit = config
             .clip_limit
             .map(|lim| (10.0 as PrcFmt).powf(lim / 20.0));
 
         let scratch = vec![0.0; chunksize];
 
-        debug!("Creating compressor '{}', channels: {}, monitor_channels: {:?}, process_channels: {:?}, attack: {}, release: {}, threshold: {}, factor: {}, makeup_gain: {}, soft_clip: {}, clip_limit: {:?}",
-                name, channels, process_channels, monitor_channels, attack, release, config.threshold, config.factor, config.makeup_gain(), config.soft_clip(), clip_limit);
+        debug!("Creating compressor '{}', channels: {}, monitor_channels: {:?}, process_channels: {:?}, attack: {}, hold: {}, release: {}, threshold: {}, factor: {}, makeup_gain: {}, soft_clip: {}, clip_limit: {:?}",
+                name, channels, process_channels, monitor_channels, attack, hold, release, config.threshold, config.factor, config.makeup_gain(), config.soft_clip(), clip_limit);
         let limiter = if let Some(limit) = config.clip_limit {
             let limitconf = config::LimiterParameters {
                 clip_limit: limit,
@@ -72,6 +77,7 @@ impl Compressor {
             monitor_channels,
             process_channels,
             attack,
+            hold,
             release,
             threshold: config.threshold,
             factor: config.factor,
@@ -81,6 +87,8 @@ impl Compressor {
             scratch,
             prev_loudness: 0.0, // -inf dBFS
             prev_gain: 1.0,     // 0 dBFS
+            hold_value: 0.0,
+            hold_timer: 0,
         }
     }
 
@@ -109,10 +117,20 @@ impl Compressor {
     fn calculate_linear_gain(&mut self) {
         let makeup_gain_linear = (10.0 as PrcFmt).powf(self.makeup_gain / 20.0);
         let threshold_linear = (10.0 as PrcFmt).powf(self.threshold / 20.0);
-
         for val in self.scratch.iter_mut() {
-            self.prev_gain = self.prev_gain * self.attack + *val * (1.0 - self.attack);
+            if *val > threshold_linear {
+                self.hold_value = self.hold_value.max(*val);
+                self.hold_timer = 0;
+            } else {
+                self.hold_timer += 1;
+            }
+            if self.hold_timer < self.hold {
+                *val = self.hold_value;
+            } else {
+                self.hold_value = 0.0;
+            }
 
+            self.prev_gain = self.prev_gain * self.attack + *val * (1.0 - self.attack);
             let gain = if self.prev_gain > threshold_linear {
                 let gain_db = 20.0 * self.prev_gain.log10();
                 let gain_offset = -(gain_db - self.threshold) * (self.factor - 1.0) / self.factor;

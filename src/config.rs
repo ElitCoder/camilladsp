@@ -1148,6 +1148,7 @@ pub struct CompressorParameters {
     #[serde(default)]
     pub process_channels: Option<Vec<usize>>,
     pub attack: PrcFmt,
+    pub hold: PrcFmt,
     pub release: PrcFmt,
     pub threshold: PrcFmt,
     pub factor: PrcFmt,
