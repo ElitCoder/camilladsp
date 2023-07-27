@@ -18,6 +18,7 @@ pub struct Gain {
     pub gain: PrcFmt,
 }
 
+#[derive(Clone, Debug)]
 pub struct Delay {
     pub name: String,
     samplerate: usize,

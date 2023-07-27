@@ -53,14 +53,20 @@ impl Compressor {
 
         let scratch = vec![0.0; chunksize];
 
-        debug!("Creating compressor '{}', channels: {}, monitor_channels: {:?}, process_channels: {:?}, attack: {}, release: {}, threshold: {}, factor: {}, makeup_gain: {}, soft_clip: {}, clip_limit: {:?}", 
+        if let Some(_) = config.lookahead {
+            // FIXME: Using lookahead would require a separate limiter instance per compressor due to the delay element
+            warn!("Limiting using lookahead is not implemented for compressors");
+        }
+
+        debug!("Creating compressor '{}', channels: {}, monitor_channels: {:?}, process_channels: {:?}, attack: {}, release: {}, threshold: {}, factor: {}, makeup_gain: {}, soft_clip: {}, clip_limit: {:?}",
                 name, channels, process_channels, monitor_channels, attack, release, config.threshold, config.factor, config.makeup_gain(), config.soft_clip(), clip_limit);
         let limiter = if let Some(limit) = config.clip_limit {
             let limitconf = config::LimiterParameters {
                 clip_limit: limit,
                 soft_clip: config.soft_clip,
+                lookahead: Some(0),
             };
-            Some(Limiter::from_config("Limiter", limitconf))
+            Some(Limiter::from_config("Limiter", samplerate, limitconf))
         } else {
             None
         };
@@ -177,12 +183,18 @@ impl Processor for Compressor {
                 .clip_limit
                 .map(|lim| (10.0 as PrcFmt).powf(lim / 20.0));
 
+            if let Some(_) = config.lookahead {
+                // FIXME: Using lookahead would require a separate limiter instance per compressor due to the delay element
+                warn!("Limiting using lookahead is not implemented for compressors");
+            }
+
             let limiter = if let Some(limit) = config.clip_limit {
                 let limitconf = config::LimiterParameters {
                     clip_limit: limit,
                     soft_clip: config.soft_clip,
+                    lookahead: Some(0),
                 };
-                Some(Limiter::from_config("Limiter", limitconf))
+                Some(Limiter::from_config("Limiter", self.samplerate, limitconf))
             } else {
                 None
             };
@@ -196,8 +208,7 @@ impl Processor for Compressor {
             self.makeup_gain = config.makeup_gain();
             self.limiter = limiter;
 
-            debug!("Updated compressor '{}', monitor_channels: {:?}, process_channels: {:?}, attack: {}, release: {}, threshold: {}, factor: {}, makeup_gain: {}, soft_clip: {}, clip_limit: {:?}", 
-                self.name, self.process_channels, self.monitor_channels, attack, release, config.threshold, config.factor, config.makeup_gain(), config.soft_clip(), clip_limit);
+            debug!("Updated compressor '{}', monitor_channels: {:?}, process_channels: {:?}, attack: {}, release: {}, threshold: {}, factor: {}, makeup_gain: {}, soft_clip: {}, clip_limit: {:?}", self.name, self.process_channels, self.monitor_channels, attack, release, config.threshold, config.factor, config.makeup_gain(), config.soft_clip(), clip_limit);
         } else {
             // This should never happen unless there is a bug somewhere else
             panic!("Invalid config change!");

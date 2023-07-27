@@ -1157,6 +1157,8 @@ pub struct CompressorParameters {
     pub soft_clip: Option<bool>,
     #[serde(default)]
     pub clip_limit: Option<PrcFmt>,
+    #[serde(default)]
+    pub lookahead: Option<usize>,
 }
 
 impl CompressorParameters {
@@ -1175,6 +1177,10 @@ impl CompressorParameters {
     pub fn soft_clip(&self) -> bool {
         self.soft_clip.unwrap_or_default()
     }
+
+    pub fn lookahead(&self) -> usize {
+        self.lookahead.unwrap_or_default()
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -1184,11 +1190,17 @@ pub struct LimiterParameters {
     pub soft_clip: Option<bool>,
     #[serde(default)]
     pub clip_limit: PrcFmt,
+    #[serde(default)]
+    pub lookahead: Option<usize>,
 }
 
 impl LimiterParameters {
     pub fn soft_clip(&self) -> bool {
         self.soft_clip.unwrap_or_default()
+    }
+
+    pub fn lookahead(&self) -> usize {
+        self.lookahead.unwrap_or_default()
     }
 }
 

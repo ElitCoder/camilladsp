@@ -409,7 +409,7 @@ impl FilterGroup {
                         Box::new(diffeq::DiffEq::from_config(name, parameters))
                     }
                     config::Filter::Limiter { parameters, .. } => {
-                        Box::new(limiter::Limiter::from_config(name, parameters))
+                        Box::new(limiter::Limiter::from_config(name, sample_freq, parameters))
                     }
                 };
             filters.push(filter);
