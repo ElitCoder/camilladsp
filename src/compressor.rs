@@ -20,6 +20,7 @@ pub struct Compressor {
     pub samplerate: usize,
     pub scratch: Vec<PrcFmt>,
     pub prev_loudness: PrcFmt,
+    pub prev_gain: PrcFmt,
     pub clip_use_monitor: bool,
 }
 
@@ -47,7 +48,7 @@ impl Compressor {
             }
         }
         let attack = (-1.0 / srate / config.attack).exp();
-        let release = (-1.0 / srate / config.release).exp();
+        let release = (-1.0 / srate / (config.release - config.attack)).exp();
         let clip_limit = config
             .clip_limit
             .map(|lim| (10.0 as PrcFmt).powf(lim / 20.0));
@@ -84,7 +85,8 @@ impl Compressor {
             limiters: limiters,
             samplerate,
             scratch,
-            prev_loudness: -100.0,
+            prev_loudness: 0.0,
+            prev_gain: 1.0,
             clip_use_monitor: clip_use_monitor,
         }
     }
@@ -103,27 +105,35 @@ impl Compressor {
     /// Estimate loudness, store result in self.scratch
     fn estimate_loudness(&mut self) {
         for val in self.scratch.iter_mut() {
-            // convert to dB
-            *val = 20.0 * (val.abs() + 1.0e-9).log10();
-            if *val >= self.prev_loudness {
-                *val = self.attack * self.prev_loudness + (1.0 - self.attack) * *val;
-            } else {
-                *val = self.release * self.prev_loudness + (1.0 - self.release) * *val;
-            }
-            self.prev_loudness = *val;
+            // Calculate RMS using moving average
+            self.prev_loudness =
+                self.attack * self.prev_loudness + (1.0 - self.attack) * val.powi(2);
+            *val = self.prev_loudness.sqrt();
         }
     }
 
     /// Calculate linear gain, store result in self.scratch
     fn calculate_linear_gain(&mut self) {
+        let threshold_linear = (10.0 as PrcFmt).powf(self.threshold / 20.0);
+        let makeup_gain_linear = (10.0 as PrcFmt).powf(self.makeup_gain / 20.0);
         for val in self.scratch.iter_mut() {
-            if *val > self.threshold {
-                *val = -(*val - self.threshold) * (self.factor - 1.0) / self.factor;
+            let gain = if *val > threshold_linear {
+                // FIXME: Add an option in the configuration to pick RMS compressor with limiter functionality
+                if self.factor > 1000.0 {
+                    // Limiter in lack of a configuration variable
+                    threshold_linear / *val
+                } else {
+                    // Compressor
+                    let rms_db = (20.0 as PrcFmt) * val.log10();
+                    let gain_db = -(rms_db - self.threshold) * (self.factor - 1.0) / self.factor;
+                    (10.0 as PrcFmt).powf(gain_db / 20.0)
+                }
             } else {
-                *val = 0.0;
-            }
-            *val += self.makeup_gain;
-            *val = (10.0 as PrcFmt).powf(*val / 20.0);
+                // FIXME: This seems to cause very long release times, investigate
+                self.release * self.prev_gain + (1.0 - self.release) * 1.0
+            };
+            self.prev_gain = gain;
+            *val = gain * makeup_gain_linear;
         }
     }
 
