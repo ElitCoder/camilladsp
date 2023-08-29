@@ -1859,11 +1859,13 @@ Example:
     parameters:
       soft_clip: false (*)
       clip_limit: -10.0
+      lookahead: 440 (*)
 ```
 
 Parameters:
   * `soft_clip`: enable soft clipping. Set to `false` to use hard clipping. Optional, defaults to `false`.
   * `clip_limit`: the level in dB to clip at.
+  * `lookahead`: how far ahead in samples the limiter should look to anticipate incoming peaks. Soft clip is automatically disabled when lookahead is enabled (>0 samples). Optional, defaults to 0 samples.
 
 ### Difference equation
 The "DiffEq" filter implements a generic difference equation filter with transfer function:
@@ -1906,6 +1908,8 @@ processors:
       makeup_gain: 15 (*)
       clip_limit: 0.0 (*)
       soft_clip: true (*)
+      clip_lookahead: 440 (*)
+      clip_use_monitor: true (*)
       monitor_channels: [0, 1] (*)
       process_channels: [0, 1] (*)
 
@@ -1926,6 +1930,8 @@ pipeline:
   * `soft_clip`: enable soft clipping. Set to `false` to use hard clipping. This setting is ignored when clipping is disabled.
     Note that soft clipping introduces some harmonic distortion to the signal.
     This setting is ignored if `enable_clip = false`. Optional, defaults to `false`.
+  * `clip_lookahead`: how far ahead in samples the limiter should look to anticipate incoming peaks. Optional, defaults to 0 samples.
+  * `clip_use_monitor`: if the limiter should use the monitor channel for calculating the gain needed, only usable when lookahead >0 samples. Optional, defaults to false.
   * `monitor_channels`: a list of channels used when estimating the loudness. Optional, defaults to all channels.
   * `process_channels`: a list of channels that should be compressed. Optional, defaults to all channels.
 
