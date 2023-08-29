@@ -111,15 +111,8 @@ impl Limiter {
             .zip(gains)
             .for_each(|(sample, gain)| *sample *= gain);
     }
-}
 
-impl Filter for Limiter {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    /// Apply a Compressor to an AudioChunk, modifying it in-place.
-    fn process_waveform(&mut self, waveform: &mut [PrcFmt]) -> Res<()> {
+    pub fn process_limiter(&mut self, waveform: &mut [PrcFmt]) {
         if self.lookahead > 0 {
             // Calculate gain from incoming samples
             let gains = self.calculate_gain(waveform);
@@ -130,6 +123,30 @@ impl Filter for Limiter {
             // Otherwise use normal soft or hard clipping
             self.apply_clip(waveform);
         }
+    }
+
+    pub fn process_limiter_with_monitor(&mut self, monitor: &[PrcFmt], playback: &mut [PrcFmt]) {
+        if self.lookahead > 0 {
+            // Calculate gain from incoming samples
+            let gains = self.calculate_gain(monitor);
+            // Apply delay to the playback signal and then apply the gain
+            self.delay.process_waveform(playback).unwrap();
+            self.apply_limiter(gains, playback);
+        } else {
+            // Otherwise use normal soft or hard clipping
+            self.apply_clip(playback);
+        }
+    }
+}
+
+impl Filter for Limiter {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Apply a Compressor to an AudioChunk, modifying it in-place.
+    fn process_waveform(&mut self, waveform: &mut [PrcFmt]) -> Res<()> {
+        self.process_limiter(waveform);
         Ok(())
     }
 

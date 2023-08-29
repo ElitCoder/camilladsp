@@ -16,10 +16,11 @@ pub struct Compressor {
     pub threshold: PrcFmt,
     pub factor: PrcFmt,
     pub makeup_gain: PrcFmt,
-    pub limiter: Option<Limiter>,
+    pub limiters: Option<Vec<Limiter>>,
     pub samplerate: usize,
     pub scratch: Vec<PrcFmt>,
     pub prev_loudness: PrcFmt,
+    pub clip_use_monitor: bool,
 }
 
 impl Compressor {
@@ -53,20 +54,19 @@ impl Compressor {
 
         let scratch = vec![0.0; chunksize];
 
-        if let Some(_) = config.lookahead {
-            // FIXME: Using lookahead would require a separate limiter instance per compressor due to the delay element
-            warn!("Limiting using lookahead is not implemented for compressors");
-        }
+        // Limit each playback channel by itself by default
+        let clip_use_monitor = config.clip_use_monitor.unwrap_or(false);
 
-        debug!("Creating compressor '{}', channels: {}, monitor_channels: {:?}, process_channels: {:?}, attack: {}, release: {}, threshold: {}, factor: {}, makeup_gain: {}, soft_clip: {}, clip_limit: {:?}",
-                name, channels, process_channels, monitor_channels, attack, release, config.threshold, config.factor, config.makeup_gain(), config.soft_clip(), clip_limit);
-        let limiter = if let Some(limit) = config.clip_limit {
+        debug!("Creating compressor '{}', channels: {}, monitor_channels: {:?}, process_channels: {:?}, attack: {}, release: {}, threshold: {}, factor: {}, makeup_gain: {}, soft_clip: {}, clip_limit: {:?}, clip_lookahead: {}, clip_use_monitor: {}",
+                name, channels, process_channels, monitor_channels, attack, release, config.threshold, config.factor, config.makeup_gain(), config.soft_clip(), clip_limit, config.clip_lookahead(), config.clip_use_monitor());
+        let limiters = if let Some(limit) = config.clip_limit {
             let limitconf = config::LimiterParameters {
                 clip_limit: limit,
                 soft_clip: config.soft_clip,
-                lookahead: Some(0),
+                lookahead: config.clip_lookahead,
             };
-            Some(Limiter::from_config("Limiter", samplerate, limitconf))
+            let limiter = Limiter::from_config("Limiter", samplerate, limitconf);
+            Some(vec![limiter; process_channels.len()])
         } else {
             None
         };
@@ -81,10 +81,11 @@ impl Compressor {
             threshold: config.threshold,
             factor: config.factor,
             makeup_gain: config.makeup_gain(),
-            limiter,
+            limiters: limiters,
             samplerate,
             scratch,
             prev_loudness: -100.0,
+            clip_use_monitor: clip_use_monitor,
         }
     }
 
@@ -131,12 +132,6 @@ impl Compressor {
             *val *= gain;
         }
     }
-
-    fn apply_limiter(&self, input: &mut [PrcFmt]) {
-        if let Some(limiter) = &self.limiter {
-            limiter.apply_clip(input);
-        }
-    }
 }
 
 impl Processor for Compressor {
@@ -151,7 +146,20 @@ impl Processor for Compressor {
         self.calculate_linear_gain();
         for ch in self.process_channels.iter() {
             self.apply_gain(&mut input.waveforms[*ch]);
-            self.apply_limiter(&mut input.waveforms[*ch]);
+        }
+        if self.clip_use_monitor {
+            // Sum monitor channels again since the result is overwritten in the compressor gain calculations
+            self.sum_monitor_channels(input);
+        }
+        if let Some(limiters) = &mut self.limiters {
+            for (limiter, ch) in limiters.iter_mut().zip(self.process_channels.iter()) {
+                if self.clip_use_monitor {
+                    // TODO: This can be done quicker by just calculating the monitor channel gains once
+                    limiter.process_limiter_with_monitor(&self.scratch, &mut input.waveforms[*ch]);
+                } else {
+                    limiter.process_limiter(&mut input.waveforms[*ch]);
+                }
+            }
         }
         Ok(())
     }
@@ -183,22 +191,19 @@ impl Processor for Compressor {
                 .clip_limit
                 .map(|lim| (10.0 as PrcFmt).powf(lim / 20.0));
 
-            if let Some(_) = config.lookahead {
-                // FIXME: Using lookahead would require a separate limiter instance per compressor due to the delay element
-                warn!("Limiting using lookahead is not implemented for compressors");
-            }
-
-            let limiter = if let Some(limit) = config.clip_limit {
+            let limiters = if let Some(limit) = config.clip_limit {
                 let limitconf = config::LimiterParameters {
                     clip_limit: limit,
                     soft_clip: config.soft_clip,
-                    lookahead: Some(0),
+                    lookahead: config.clip_lookahead,
                 };
-                Some(Limiter::from_config("Limiter", self.samplerate, limitconf))
+                let limiter = Limiter::from_config("Limiter", self.samplerate, limitconf);
+                Some(vec![limiter; process_channels.len()])
             } else {
                 None
             };
 
+            self.limiters = limiters;
             self.monitor_channels = monitor_channels;
             self.process_channels = process_channels;
             self.attack = attack;
@@ -206,9 +211,8 @@ impl Processor for Compressor {
             self.threshold = config.threshold;
             self.factor = config.factor;
             self.makeup_gain = config.makeup_gain();
-            self.limiter = limiter;
 
-            debug!("Updated compressor '{}', monitor_channels: {:?}, process_channels: {:?}, attack: {}, release: {}, threshold: {}, factor: {}, makeup_gain: {}, soft_clip: {}, clip_limit: {:?}", self.name, self.process_channels, self.monitor_channels, attack, release, config.threshold, config.factor, config.makeup_gain(), config.soft_clip(), clip_limit);
+            debug!("Updated compressor '{}', monitor_channels: {:?}, process_channels: {:?}, attack: {}, release: {}, threshold: {}, factor: {}, makeup_gain: {}, soft_clip: {}, clip_limit: {:?}, clip_lookahead: {}, clip_use_monitor: {}", self.name, self.process_channels, self.monitor_channels, attack, release, config.threshold, config.factor, config.makeup_gain(), config.soft_clip(), clip_limit, config.clip_lookahead(), config.clip_use_monitor());
         } else {
             // This should never happen unless there is a bug somewhere else
             panic!("Invalid config change!");

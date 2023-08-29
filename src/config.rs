@@ -1158,7 +1158,8 @@ pub struct CompressorParameters {
     #[serde(default)]
     pub clip_limit: Option<PrcFmt>,
     #[serde(default)]
-    pub lookahead: Option<usize>,
+    pub clip_lookahead: Option<usize>,
+    pub clip_use_monitor: Option<bool>,
 }
 
 impl CompressorParameters {
@@ -1178,8 +1179,12 @@ impl CompressorParameters {
         self.soft_clip.unwrap_or_default()
     }
 
-    pub fn lookahead(&self) -> usize {
-        self.lookahead.unwrap_or_default()
+    pub fn clip_lookahead(&self) -> usize {
+        self.clip_lookahead.unwrap_or_default()
+    }
+
+    pub fn clip_use_monitor(&self) -> bool {
+        self.clip_use_monitor.unwrap_or_default()
     }
 }
 
