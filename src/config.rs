@@ -1160,6 +1160,7 @@ pub struct CompressorParameters {
     #[serde(default)]
     pub clip_lookahead: Option<usize>,
     pub clip_use_monitor: Option<bool>,
+    pub monitor_use_power: Option<bool>,
 }
 
 impl CompressorParameters {
@@ -1185,6 +1186,10 @@ impl CompressorParameters {
 
     pub fn clip_use_monitor(&self) -> bool {
         self.clip_use_monitor.unwrap_or_default()
+    }
+
+    pub fn monitor_use_power(&self) -> bool {
+        self.monitor_use_power.unwrap_or_default()
     }
 }
 

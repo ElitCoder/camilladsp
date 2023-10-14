@@ -22,6 +22,7 @@ pub struct Compressor {
     pub prev_loudness: PrcFmt,
     pub prev_gain: PrcFmt,
     pub clip_use_monitor: bool,
+    pub monitor_use_power: bool,
 }
 
 impl Compressor {
@@ -58,6 +59,9 @@ impl Compressor {
         // Limit each playback channel by itself by default
         let clip_use_monitor = config.clip_use_monitor.unwrap_or(false);
 
+        // Sum up monitor channels using power or voltage
+        let monitor_use_power = config.monitor_use_power.unwrap_or(false);
+
         debug!("Creating compressor '{}', channels: {}, monitor_channels: {:?}, process_channels: {:?}, attack: {}, release: {}, threshold: {}, factor: {}, makeup_gain: {}, soft_clip: {}, clip_limit: {:?}, clip_lookahead: {}, clip_use_monitor: {}",
                 name, channels, process_channels, monitor_channels, attack, release, config.threshold, config.factor, config.makeup_gain(), config.soft_clip(), clip_limit, config.clip_lookahead(), config.clip_use_monitor());
         let limiters = if let Some(limit) = config.clip_limit {
@@ -88,16 +92,31 @@ impl Compressor {
             prev_loudness: 0.0,
             prev_gain: 1.0,
             clip_use_monitor: clip_use_monitor,
+            monitor_use_power: monitor_use_power,
         }
     }
 
     /// Sum all channels that are included in loudness monitoring, store result in self.scratch
     fn sum_monitor_channels(&mut self, input: &AudioChunk) {
-        let ch = self.monitor_channels[0];
-        self.scratch.copy_from_slice(&input.waveforms[ch]);
-        for ch in self.monitor_channels.iter().skip(1) {
-            for (acc, val) in self.scratch.iter_mut().zip(input.waveforms[*ch].iter()) {
-                *acc += *val;
+        if self.monitor_channels.len() == 1 {
+            let ch = self.monitor_channels[0];
+            self.scratch.copy_from_slice(&input.waveforms[ch]);
+        } else {
+            if self.monitor_use_power {
+                for (idx, _) in input.waveforms[self.monitor_channels[0]].iter().enumerate() {
+                    self.scratch[idx] = self.monitor_channels.iter().fold(0.0, |acc, channel| {
+                        acc + input.waveforms[self.monitor_channels[*channel]][idx].powi(2)
+                    }).sqrt();
+                }
+                println!("HEREEEEEEEE {}", self.scratch[0]);
+            } else {
+                let ch = self.monitor_channels[0];
+                self.scratch.copy_from_slice(&input.waveforms[ch]);
+                for ch in self.monitor_channels.iter().skip(1) {
+                    for (acc, val) in self.scratch.iter_mut().zip(input.waveforms[*ch].iter()) {
+                        *acc += *val;
+                    }
+                }
             }
         }
     }
@@ -221,6 +240,8 @@ impl Processor for Compressor {
             self.threshold = config.threshold;
             self.factor = config.factor;
             self.makeup_gain = config.makeup_gain();
+            self.clip_use_monitor = config.clip_use_monitor();
+            self.monitor_use_power = config.monitor_use_power();
 
             debug!("Updated compressor '{}', monitor_channels: {:?}, process_channels: {:?}, attack: {}, release: {}, threshold: {}, factor: {}, makeup_gain: {}, soft_clip: {}, clip_limit: {:?}, clip_lookahead: {}, clip_use_monitor: {}", self.name, self.process_channels, self.monitor_channels, attack, release, config.threshold, config.factor, config.makeup_gain(), config.soft_clip(), clip_limit, config.clip_lookahead(), config.clip_use_monitor());
         } else {
